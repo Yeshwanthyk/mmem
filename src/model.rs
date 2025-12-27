@@ -1,6 +1,13 @@
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedMessage {
+    pub role: Option<String>,
+    pub text: String,
+    pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSession {
     pub created_at: Option<String>,
     pub last_message_at: Option<String>,
@@ -10,6 +17,7 @@ pub struct ParsedSession {
     pub message_count: usize,
     pub snippet: String,
     pub content: String,
+    pub messages: Vec<ParsedMessage>,
 }
 
 impl ParsedSession {
@@ -23,17 +31,18 @@ impl ParsedSession {
             message_count: 0,
             snippet: String::new(),
             content: String::new(),
+            messages: Vec::new(),
         }
     }
 
-    pub fn into_record(
+    pub fn into_parts(
         self,
         path: String,
         mtime: i64,
         size: i64,
         hash: Option<String>,
-    ) -> SessionRecord {
-        SessionRecord {
+    ) -> (SessionRecord, Vec<ParsedMessage>) {
+        let record = SessionRecord {
             path,
             mtime,
             size,
@@ -46,7 +55,12 @@ impl ParsedSession {
             message_count: self.message_count as i64,
             snippet: self.snippet,
             content: self.content,
-        }
+            repo_root: None,
+            repo_name: None,
+            branch: None,
+        };
+
+        (record, self.messages)
     }
 }
 
@@ -64,6 +78,17 @@ pub struct SessionRecord {
     pub message_count: i64,
     pub snippet: String,
     pub content: String,
+    pub repo_root: Option<String>,
+    pub repo_name: Option<String>,
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageRecord {
+    pub turn_index: i64,
+    pub role: Option<String>,
+    pub timestamp: Option<String>,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,7 +97,35 @@ pub struct SessionHit {
     pub title: Option<String>,
     pub agent: Option<String>,
     pub workspace: Option<String>,
+    pub repo_root: Option<String>,
+    pub repo_name: Option<String>,
+    pub branch: Option<String>,
     pub last_message_at: Option<String>,
     pub snippet: Option<String>,
     pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageContext {
+    pub turn_index: i64,
+    pub role: Option<String>,
+    pub timestamp: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MessageHit {
+    pub path: String,
+    pub title: Option<String>,
+    pub agent: Option<String>,
+    pub workspace: Option<String>,
+    pub repo_root: Option<String>,
+    pub repo_name: Option<String>,
+    pub branch: Option<String>,
+    pub turn_index: i64,
+    pub role: Option<String>,
+    pub timestamp: Option<String>,
+    pub text: String,
+    pub score: f64,
+    pub context: Option<Vec<MessageContext>>,
 }

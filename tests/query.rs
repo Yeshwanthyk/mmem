@@ -17,6 +17,9 @@ fn record(path: &str, agent: &str, workspace: &str, last_message_at: &str) -> Se
         message_count: 2,
         snippet: "snippet".to_string(),
         content: "alpha beta".to_string(),
+        repo_root: None,
+        repo_name: None,
+        branch: None,
     }
 }
 

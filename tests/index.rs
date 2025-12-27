@@ -16,6 +16,9 @@ fn sample_record() -> SessionRecord {
         message_count: 2,
         snippet: "hello".to_string(),
         content: "[user] hello\n[assistant] hi".to_string(),
+        repo_root: None,
+        repo_name: None,
+        branch: None,
     }
 }
 

@@ -17,6 +17,9 @@ fn record(path: &str, last_message_at: &str) -> SessionRecord {
         message_count: 2,
         snippet: "snippet".to_string(),
         content: "alpha".to_string(),
+        repo_root: None,
+        repo_name: None,
+        branch: None,
     }
 }
 

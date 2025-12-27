@@ -1,4 +1,4 @@
-use crate::model::ParsedSession;
+use crate::model::{ParsedMessage, ParsedSession};
 use serde_json::Value;
 
 const MAX_SNIPPET_LEN: usize = 240;
@@ -20,13 +20,6 @@ struct Meta {
     last_message_at: Option<String>,
     agent: Option<String>,
     workspace: Option<String>,
-}
-
-#[derive(Debug)]
-struct NormalizedMessage {
-    role: Option<String>,
-    text: String,
-    timestamp: Option<String>,
 }
 
 pub fn parse_jsonl(input: &str) -> Result<ParsedSession, ParseError> {
@@ -103,7 +96,7 @@ pub fn parse_markdown(input: &str) -> ParsedSession {
             continue;
         }
 
-        messages.push(NormalizedMessage {
+        messages.push(ParsedMessage {
             role,
             text,
             timestamp: None,
@@ -113,7 +106,7 @@ pub fn parse_markdown(input: &str) -> ParsedSession {
     build_parsed_session(messages, Meta::default())
 }
 
-fn build_parsed_session(messages: Vec<NormalizedMessage>, mut meta: Meta) -> ParsedSession {
+fn build_parsed_session(messages: Vec<ParsedMessage>, mut meta: Meta) -> ParsedSession {
     if meta.created_at.is_none() {
         meta.created_at = messages.first().and_then(|m| m.timestamp.clone());
     }
@@ -139,10 +132,11 @@ fn build_parsed_session(messages: Vec<NormalizedMessage>, mut meta: Meta) -> Par
         message_count: messages.len(),
         snippet: make_snippet(&content),
         content,
+        messages,
     }
 }
 
-fn format_session_entry(value: &Value) -> Option<NormalizedMessage> {
+fn format_session_entry(value: &Value) -> Option<ParsedMessage> {
     if value
         .get("type")
         .and_then(|v| v.as_str())
@@ -181,7 +175,7 @@ fn format_session_entry(value: &Value) -> Option<NormalizedMessage> {
                 return Some(message);
             }
         } else if let Some(text) = coerce_content(message_value) {
-            return Some(NormalizedMessage {
+            return Some(ParsedMessage {
                 role: value
                     .get("role")
                     .and_then(|v| v.as_str())
@@ -202,7 +196,7 @@ fn format_session_entry(value: &Value) -> Option<NormalizedMessage> {
     None
 }
 
-fn message_from_object(value: &Value) -> Option<NormalizedMessage> {
+fn message_from_object(value: &Value) -> Option<ParsedMessage> {
     let role = value
         .get("role")
         .and_then(|v| v.as_str())
@@ -219,7 +213,7 @@ fn message_from_object(value: &Value) -> Option<NormalizedMessage> {
         return None;
     }
 
-    Some(NormalizedMessage {
+    Some(ParsedMessage {
         role,
         text,
         timestamp: extract_timestamp(value),
@@ -348,7 +342,7 @@ fn normalize_role(role: &str) -> String {
     role.trim().to_lowercase()
 }
 
-fn first_user_title(messages: &[NormalizedMessage]) -> Option<String> {
+fn first_user_title(messages: &[ParsedMessage]) -> Option<String> {
     messages.iter().find_map(|message| {
         if message.role.as_deref() == Some("user") {
             let title = message.text.trim();

@@ -1,4 +1,4 @@
-use crate::model::SessionRecord;
+use crate::model::{MessageRecord, SessionRecord};
 use rusqlite::{Connection, Transaction, params};
 
 const SCHEMA: &str = r#"
@@ -13,7 +13,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   workspace TEXT,
   title TEXT,
   message_count INTEGER,
-  snippet TEXT
+  snippet TEXT,
+  repo_root TEXT,
+  repo_name TEXT,
+  branch TEXT
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
@@ -21,8 +24,25 @@ CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
   path UNINDEXED
 );
 
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY,
+  session_path TEXT NOT NULL,
+  turn_index INTEGER NOT NULL,
+  role TEXT,
+  timestamp TEXT,
+  text TEXT
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  text,
+  message_id UNINDEXED,
+  session_path UNINDEXED,
+  role UNINDEXED
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_last_message_at ON sessions(last_message_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent);
+CREATE INDEX IF NOT EXISTS idx_messages_session_turn ON messages(session_path, turn_index);
 "#;
 
 #[derive(Debug, Clone)]
@@ -46,6 +66,9 @@ impl From<rusqlite::Error> for IndexError {
 
 pub fn init_schema(conn: &Connection) -> Result<(), IndexError> {
     conn.execute_batch(SCHEMA)?;
+    ensure_column(conn, "sessions", "repo_root", "TEXT")?;
+    ensure_column(conn, "sessions", "repo_name", "TEXT")?;
+    ensure_column(conn, "sessions", "branch", "TEXT")?;
     Ok(())
 }
 
@@ -93,8 +116,11 @@ pub fn upsert_session_tx(tx: &Transaction<'_>, record: &SessionRecord) -> Result
             workspace,
             title,
             message_count,
-            snippet
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            snippet,
+            repo_root,
+            repo_name,
+            branch
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         ON CONFLICT(path) DO UPDATE SET
             mtime = excluded.mtime,
             size = excluded.size,
@@ -105,7 +131,10 @@ pub fn upsert_session_tx(tx: &Transaction<'_>, record: &SessionRecord) -> Result
             workspace = excluded.workspace,
             title = excluded.title,
             message_count = excluded.message_count,
-            snippet = excluded.snippet",
+            snippet = excluded.snippet,
+            repo_root = excluded.repo_root,
+            repo_name = excluded.repo_name,
+            branch = excluded.branch",
         params![
             &record.path,
             record.mtime,
@@ -118,6 +147,9 @@ pub fn upsert_session_tx(tx: &Transaction<'_>, record: &SessionRecord) -> Result
             &record.title,
             record.message_count,
             &record.snippet,
+            &record.repo_root,
+            &record.repo_name,
+            &record.branch,
         ],
     )?;
 
@@ -133,6 +165,49 @@ pub fn upsert_session_tx(tx: &Transaction<'_>, record: &SessionRecord) -> Result
     Ok(())
 }
 
+pub fn replace_messages_tx(
+    tx: &Transaction<'_>,
+    session_path: &str,
+    messages: &[MessageRecord],
+) -> Result<(), IndexError> {
+    tx.execute(
+        "DELETE FROM messages_fts WHERE session_path = ?1",
+        params![session_path],
+    )?;
+    tx.execute(
+        "DELETE FROM messages WHERE session_path = ?1",
+        params![session_path],
+    )?;
+
+    let mut insert_message = tx.prepare(
+        "INSERT INTO messages (session_path, turn_index, role, timestamp, text)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+    )?;
+    let mut insert_fts = tx.prepare(
+        "INSERT INTO messages_fts (text, message_id, session_path, role)
+         VALUES (?1, ?2, ?3, ?4)",
+    )?;
+
+    for message in messages {
+        insert_message.execute(params![
+            session_path,
+            message.turn_index,
+            &message.role,
+            &message.timestamp,
+            &message.text,
+        ])?;
+        let message_id = tx.last_insert_rowid();
+        insert_fts.execute(params![
+            &message.text,
+            message_id,
+            session_path,
+            &message.role,
+        ])?;
+    }
+
+    Ok(())
+}
+
 pub fn remove_session(conn: &mut Connection, path: &str) -> Result<(), IndexError> {
     let tx = conn.transaction()?;
     remove_session_tx(&tx, path)?;
@@ -141,8 +216,38 @@ pub fn remove_session(conn: &mut Connection, path: &str) -> Result<(), IndexErro
 }
 
 pub fn remove_session_tx(tx: &Transaction<'_>, path: &str) -> Result<(), IndexError> {
+    tx.execute(
+        "DELETE FROM messages_fts WHERE session_path = ?1",
+        params![path],
+    )?;
+    tx.execute(
+        "DELETE FROM messages WHERE session_path = ?1",
+        params![path],
+    )?;
     tx.execute("DELETE FROM sessions_fts WHERE path = ?1", params![path])?;
     tx.execute("DELETE FROM sessions WHERE path = ?1", params![path])?;
 
+    Ok(())
+}
+
+fn ensure_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    col_type: &str,
+) -> Result<(), IndexError> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(());
+        }
+    }
+
+    conn.execute(
+        &format!("ALTER TABLE {} ADD COLUMN {} {}", table, column, col_type),
+        [],
+    )?;
     Ok(())
 }
