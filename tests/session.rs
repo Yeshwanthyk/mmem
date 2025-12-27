@@ -17,7 +17,7 @@ fn loads_turn_and_extracts_tool_calls() {
 #[test]
 fn scans_tool_calls_with_filter() {
     let path = Path::new("tests/fixtures/session_tools.jsonl");
-    let matches = scan_tool_calls(path, Some("read")).expect("scan tool calls");
+    let matches = scan_tool_calls(path, Some("read"), None).expect("scan tool calls");
 
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0].line, 2);

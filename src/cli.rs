@@ -81,6 +81,8 @@ pub struct ShowArgs {
     #[arg(long)]
     pub tool: Option<String>,
     #[arg(long)]
+    pub limit: Option<usize>,
+    #[arg(long)]
     pub extract: bool,
     #[arg(long)]
     pub json: bool,

@@ -14,6 +14,8 @@ use mmem::stats::load_stats;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
+use std::io::Write;
+use std::path::PathBuf;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 
@@ -136,26 +138,29 @@ fn handle_show(args: cli::ShowArgs) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         args.tool.as_deref()
     };
+    let mut out = std::io::BufWriter::new(std::io::stdout());
 
     if let Some(turn) = args.turn {
         let entry = load_entry_by_turn(&args.path, turn)?;
-        return emit_show_entry(&entry, tool_filter, args.extract, args.json);
+        emit_show_entry(&mut out, &entry, tool_filter, args.extract, args.json)?;
+        return Ok(());
     }
 
     if let Some(line) = args.line {
         let entry = load_entry_by_line(&args.path, line)?;
-        return emit_show_entry(&entry, tool_filter, args.extract, args.json);
+        emit_show_entry(&mut out, &entry, tool_filter, args.extract, args.json)?;
+        return Ok(());
     }
 
-    let matches = scan_tool_calls(&args.path, tool_filter)?;
+    let matches = scan_tool_calls(&args.path, tool_filter, args.limit)?;
     if args.json {
         let values: Vec<Value> = matches.into_iter().map(tool_match_to_json).collect();
-        println!("{}", serde_json::to_string_pretty(&values)?);
+        let _ = writeln!(out, "{}", serde_json::to_string_pretty(&values)?);
         return Ok(());
     }
 
     if matches.is_empty() {
-        println!("no tool calls found");
+        let _ = writeln!(out, "no tool calls found");
         return Ok(());
     }
 
@@ -164,9 +169,9 @@ fn handle_show(args: cli::ShowArgs) -> Result<(), Box<dyn std::error::Error>> {
             .message_index
             .map(|idx| format!("turn {}", idx))
             .unwrap_or_else(|| "turn ?".to_string());
-        println!("line {} ({}) tool={}", item.line, turn, item.tool.name);
-        println!("{}", format_tool_args(&item.tool.arguments));
-        println!();
+        let _ = writeln!(out, "line {} ({}) tool={}", item.line, turn, item.tool.name);
+        let _ = writeln!(out, "{}", format_tool_args(&item.tool.arguments));
+        let _ = writeln!(out);
     }
 
     Ok(())
@@ -325,6 +330,7 @@ fn emit_messages_text(results: &[MessageHit], show_snippet: bool, around: usize)
 }
 
 fn emit_show_entry(
+    out: &mut dyn Write,
     entry: &SessionEntry,
     tool_filter: Option<&str>,
     extract: bool,
@@ -342,19 +348,20 @@ fn emit_show_entry(
                 continue;
             }
             if let Some(read_args) = parse_read_args(&tool.arguments) {
-                emit_read_extract(&read_args)?;
+                emit_read_extract(out, &read_args)?;
                 extracted = true;
             }
         }
 
         if !extracted {
-            println!("no readable tool calls found");
+            let _ = writeln!(out, "no readable tool calls found");
         }
         return Ok(());
     }
 
     if json {
-        println!(
+        let _ = writeln!(
+            out,
             "{}",
             serde_json::to_string_pretty(&entry_to_json(entry, &tools))?
         );
@@ -362,7 +369,7 @@ fn emit_show_entry(
     }
 
     if tools.is_empty() {
-        println!("no tool calls found");
+        let _ = writeln!(out, "no tool calls found");
         return Ok(());
     }
 
@@ -371,15 +378,15 @@ fn emit_show_entry(
         .map(|idx| format!("turn {}", idx))
         .unwrap_or_else(|| "turn ?".to_string());
     let role = entry.role.as_deref().unwrap_or("unknown");
-    println!("line {} ({}, role {})", entry.line, turn, role);
+    let _ = writeln!(out, "line {} ({}, role {})", entry.line, turn, role);
     if let Some(timestamp) = entry.timestamp.as_deref() {
-        println!("timestamp {}", timestamp);
+        let _ = writeln!(out, "timestamp {}", timestamp);
     }
 
     for tool in tools {
-        println!("tool={}", tool.name);
-        println!("{}", format_tool_args(&tool.arguments));
-        println!();
+        let _ = writeln!(out, "tool={}", tool.name);
+        let _ = writeln!(out, "{}", format_tool_args(&tool.arguments));
+        let _ = writeln!(out);
     }
 
     Ok(())
@@ -440,21 +447,42 @@ fn format_tool_args(arguments: &Value) -> String {
     }
 }
 
-fn emit_read_extract(read_args: &ReadArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let content = std::fs::read_to_string(&read_args.path)?;
+fn emit_read_extract(
+    out: &mut dyn Write,
+    read_args: &ReadArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolved = expand_home_path(&read_args.path);
+    let content = match std::fs::read_to_string(&resolved) {
+        Ok(content) => content,
+        Err(err) => {
+            let _ = writeln!(
+                out,
+                ">>> {}:{} (limit {})",
+                resolved.display(),
+                read_args.offset,
+                read_args.limit
+            );
+            let _ = writeln!(out, "read failed: {}", err);
+            let _ = writeln!(out);
+            return Ok(());
+        }
+    };
     let lines: Vec<&str> = content.lines().collect();
     let start = read_args.offset.saturating_sub(1);
     let end = std::cmp::min(lines.len(), start.saturating_add(read_args.limit));
 
-    println!(
+    let _ = writeln!(
+        out,
         ">>> {}:{} (limit {})",
-        read_args.path, read_args.offset, read_args.limit
+        resolved.display(),
+        read_args.offset,
+        read_args.limit
     );
     for (idx, line) in lines[start..end].iter().enumerate() {
         let line_no = read_args.offset + idx;
-        println!("{:>4} {}", line_no, line);
+        let _ = writeln!(out, "{:>4} {}", line_no, line);
     }
-    println!();
+    let _ = writeln!(out);
     Ok(())
 }
 
@@ -484,6 +512,20 @@ fn normalize_arguments(arguments: &Value) -> Option<Value> {
     }
     let raw = arguments.as_str()?;
     serde_json::from_str(raw).ok()
+}
+
+fn expand_home_path(path: &str) -> PathBuf {
+    if path == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
+    }
+    PathBuf::from(path)
 }
 
 fn emit_context_lines(context: &[MessageContext]) {

@@ -23,7 +23,73 @@ struct Meta {
 }
 
 pub fn extract_message(value: &Value) -> Option<ParsedMessage> {
-    format_session_entry(value)
+    if let Some(message) = format_session_entry(value) {
+        return Some(message);
+    }
+
+    if has_tool_call(value) {
+        return Some(ParsedMessage {
+            role: extract_role(value),
+            text: String::new(),
+            timestamp: extract_timestamp(value),
+        });
+    }
+
+    None
+}
+
+fn has_tool_call(value: &Value) -> bool {
+    let Some(content) = extract_content_array(value) else {
+        return false;
+    };
+
+    content.iter().any(|item| {
+        item.get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t == "toolCall")
+            .unwrap_or(false)
+    })
+}
+
+fn extract_content_array(value: &Value) -> Option<&Vec<Value>> {
+    if let Some(message) = value.get("message")
+        && let Some(content) = message.get("content").and_then(|v| v.as_array())
+    {
+        return Some(content);
+    }
+
+    if value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .map(|v| v == "response_item")
+        .unwrap_or(false)
+        && let Some(payload) = value.get("payload")
+        && payload
+            .get("type")
+            .and_then(|v| v.as_str())
+            .map(|v| v == "message")
+            .unwrap_or(false)
+        && let Some(content) = payload.get("content").and_then(|v| v.as_array())
+    {
+        return Some(content);
+    }
+
+    value.get("content").and_then(|v| v.as_array())
+}
+
+fn extract_role(value: &Value) -> Option<String> {
+    value
+        .get("message")
+        .and_then(|m| m.get("role"))
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            value
+                .get("payload")
+                .and_then(|p| p.get("role"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| value.get("role").and_then(|v| v.as_str()))
+        .map(normalize_role)
 }
 
 pub fn parse_jsonl(input: &str) -> Result<ParsedSession, ParseError> {

@@ -121,6 +121,7 @@ pub fn load_entry_by_line(path: &Path, line: usize) -> Result<SessionEntry, Sess
 pub fn scan_tool_calls(
     path: &Path,
     tool: Option<&str>,
+    limit: Option<usize>,
 ) -> Result<Vec<ToolCallMatch>, SessionError> {
     ensure_jsonl(path)?;
 
@@ -128,6 +129,7 @@ pub fn scan_tool_calls(
     let reader = BufReader::new(file);
     let mut message_index = 0usize;
     let mut matches = Vec::new();
+    let max_matches = limit.unwrap_or(usize::MAX);
 
     for (line_idx, line) in reader.lines().enumerate() {
         let line_no = line_idx + 1;
@@ -156,6 +158,9 @@ pub fn scan_tool_calls(
                 message_index: message_index_opt,
                 tool: tool_call,
             });
+            if matches.len() >= max_matches {
+                return Ok(matches);
+            }
         }
 
         if parsed.is_some() {
