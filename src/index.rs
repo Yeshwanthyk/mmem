@@ -50,7 +50,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), IndexError> {
 }
 
 pub fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
-    conn.pragma_update(None, "journal_mode", "WAL")?;
+    let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())
 }
