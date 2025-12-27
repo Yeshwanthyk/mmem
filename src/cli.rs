@@ -13,6 +13,8 @@ pub struct Cli {
 pub enum Command {
     Index(IndexArgs),
     Find(FindArgs),
+    Stats(StatsArgs),
+    Doctor(DoctorArgs),
 }
 
 #[derive(Debug, Args)]
@@ -40,6 +42,18 @@ pub struct FindArgs {
     pub workspace: Option<String>,
     #[arg(long, default_value_t = 10)]
     pub limit: usize,
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct StatsArgs {
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
     #[arg(long)]
     pub json: bool,
 }
