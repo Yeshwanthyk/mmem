@@ -13,6 +13,7 @@ pub struct Cli {
 pub enum Command {
     Index(IndexArgs),
     Find(Box<FindArgs>),
+    Show(ShowArgs),
     Stats(StatsArgs),
     Doctor(DoctorArgs),
 }
@@ -68,6 +69,21 @@ pub struct FindArgs {
     pub fields: Option<Vec<String>>,
     #[arg(long)]
     pub snippet: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ShowArgs {
+    pub path: PathBuf,
+    #[arg(long, conflicts_with = "line")]
+    pub turn: Option<usize>,
+    #[arg(long, conflicts_with = "turn")]
+    pub line: Option<usize>,
+    #[arg(long)]
+    pub tool: Option<String>,
+    #[arg(long)]
+    pub extract: bool,
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Args)]

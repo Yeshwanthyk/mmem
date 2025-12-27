@@ -6,6 +6,10 @@ use mmem::index::{configure_connection, init_schema};
 use mmem::model::{MessageContext, MessageHit, SessionHit};
 use mmem::query::{FindFilters, FindScope, find_messages, find_sessions};
 use mmem::scan::index_root;
+use mmem::session::{
+    SessionEntry, ToolCallMatch, extract_tool_calls, load_entry_by_line, load_entry_by_turn,
+    scan_tool_calls,
+};
 use mmem::stats::load_stats;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
@@ -27,6 +31,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         cli::Command::Index(args) => handle_index(args),
         cli::Command::Find(args) => handle_find(*args),
+        cli::Command::Show(args) => handle_show(args),
         cli::Command::Stats(args) => handle_stats(args),
         cli::Command::Doctor(args) => handle_doctor(args),
     }
@@ -120,6 +125,48 @@ fn handle_find(args: cli::FindArgs) -> Result<(), Box<dyn std::error::Error>> {
                 emit_messages_text(&results, args.snippet, around);
             }
         }
+    }
+
+    Ok(())
+}
+
+fn handle_show(args: cli::ShowArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let tool_filter = if args.turn.is_none() && args.line.is_none() && args.tool.is_none() {
+        Some("read")
+    } else {
+        args.tool.as_deref()
+    };
+
+    if let Some(turn) = args.turn {
+        let entry = load_entry_by_turn(&args.path, turn)?;
+        return emit_show_entry(&entry, tool_filter, args.extract, args.json);
+    }
+
+    if let Some(line) = args.line {
+        let entry = load_entry_by_line(&args.path, line)?;
+        return emit_show_entry(&entry, tool_filter, args.extract, args.json);
+    }
+
+    let matches = scan_tool_calls(&args.path, tool_filter)?;
+    if args.json {
+        let values: Vec<Value> = matches.into_iter().map(tool_match_to_json).collect();
+        println!("{}", serde_json::to_string_pretty(&values)?);
+        return Ok(());
+    }
+
+    if matches.is_empty() {
+        println!("no tool calls found");
+        return Ok(());
+    }
+
+    for item in matches {
+        let turn = item
+            .message_index
+            .map(|idx| format!("turn {}", idx))
+            .unwrap_or_else(|| "turn ?".to_string());
+        println!("line {} ({}) tool={}", item.line, turn, item.tool.name);
+        println!("{}", format_tool_args(&item.tool.arguments));
+        println!();
     }
 
     Ok(())
@@ -275,6 +322,168 @@ fn emit_messages_text(results: &[MessageHit], show_snippet: bool, around: usize)
         }
         println!();
     }
+}
+
+fn emit_show_entry(
+    entry: &SessionEntry,
+    tool_filter: Option<&str>,
+    extract: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tools = extract_tool_calls(&entry.value);
+    if let Some(filter) = tool_filter {
+        tools.retain(|tool| tool.name.eq_ignore_ascii_case(filter));
+    }
+
+    if extract {
+        let mut extracted = false;
+        for tool in tools {
+            if !tool.name.eq_ignore_ascii_case("read") {
+                continue;
+            }
+            if let Some(read_args) = parse_read_args(&tool.arguments) {
+                emit_read_extract(&read_args)?;
+                extracted = true;
+            }
+        }
+
+        if !extracted {
+            println!("no readable tool calls found");
+        }
+        return Ok(());
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entry_to_json(entry, &tools))?
+        );
+        return Ok(());
+    }
+
+    if tools.is_empty() {
+        println!("no tool calls found");
+        return Ok(());
+    }
+
+    let turn = entry
+        .message_index
+        .map(|idx| format!("turn {}", idx))
+        .unwrap_or_else(|| "turn ?".to_string());
+    let role = entry.role.as_deref().unwrap_or("unknown");
+    println!("line {} ({}, role {})", entry.line, turn, role);
+    if let Some(timestamp) = entry.timestamp.as_deref() {
+        println!("timestamp {}", timestamp);
+    }
+
+    for tool in tools {
+        println!("tool={}", tool.name);
+        println!("{}", format_tool_args(&tool.arguments));
+        println!();
+    }
+
+    Ok(())
+}
+
+fn entry_to_json(entry: &SessionEntry, tools: &[mmem::session::ToolCall]) -> Value {
+    let mut map = Map::new();
+    map.insert("line".to_string(), Value::from(entry.line as i64));
+    if let Some(turn) = entry.message_index {
+        map.insert("turn".to_string(), Value::from(turn as i64));
+    }
+    if let Some(role) = entry.role.as_deref() {
+        map.insert("role".to_string(), Value::String(role.to_string()));
+    }
+    if let Some(timestamp) = entry.timestamp.as_deref() {
+        map.insert(
+            "timestamp".to_string(),
+            Value::String(timestamp.to_string()),
+        );
+    }
+
+    let tool_values: Vec<Value> = tools.iter().map(tool_to_json).collect();
+    map.insert("tools".to_string(), Value::Array(tool_values));
+
+    Value::Object(map)
+}
+
+fn tool_match_to_json(item: ToolCallMatch) -> Value {
+    let mut map = Map::new();
+    map.insert("line".to_string(), Value::from(item.line as i64));
+    if let Some(turn) = item.message_index {
+        map.insert("turn".to_string(), Value::from(turn as i64));
+    }
+    map.insert("tool".to_string(), tool_to_json(&item.tool));
+    Value::Object(map)
+}
+
+fn tool_to_json(tool: &mmem::session::ToolCall) -> Value {
+    let mut map = Map::new();
+    map.insert("name".to_string(), Value::String(tool.name.clone()));
+    map.insert("arguments".to_string(), tool.arguments.clone());
+    Value::Object(map)
+}
+
+fn format_tool_args(arguments: &Value) -> String {
+    match normalize_arguments(arguments) {
+        Some(Value::Object(map)) if map.contains_key("path") => {
+            if let Some(read_args) = parse_read_args(arguments) {
+                return format!(
+                    "path={} offset={} limit={}",
+                    read_args.path, read_args.offset, read_args.limit
+                );
+            }
+            trim_output(&serde_json::to_string(arguments).unwrap_or_default())
+        }
+        Some(value) => trim_output(&serde_json::to_string(&value).unwrap_or_default()),
+        None => "(no arguments)".to_string(),
+    }
+}
+
+fn emit_read_extract(read_args: &ReadArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(&read_args.path)?;
+    let lines: Vec<&str> = content.lines().collect();
+    let start = read_args.offset.saturating_sub(1);
+    let end = std::cmp::min(lines.len(), start.saturating_add(read_args.limit));
+
+    println!(
+        ">>> {}:{} (limit {})",
+        read_args.path, read_args.offset, read_args.limit
+    );
+    for (idx, line) in lines[start..end].iter().enumerate() {
+        let line_no = read_args.offset + idx;
+        println!("{:>4} {}", line_no, line);
+    }
+    println!();
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ReadArgs {
+    path: String,
+    offset: usize,
+    limit: usize,
+}
+
+fn parse_read_args(arguments: &Value) -> Option<ReadArgs> {
+    let args = normalize_arguments(arguments)?;
+    let obj = args.as_object()?;
+    let path = obj.get("path").and_then(|v| v.as_str())?.to_string();
+    let offset = obj.get("offset").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+    let limit = obj.get("limit").and_then(|v| v.as_u64()).unwrap_or(200) as usize;
+    Some(ReadArgs {
+        path,
+        offset,
+        limit,
+    })
+}
+
+fn normalize_arguments(arguments: &Value) -> Option<Value> {
+    if arguments.is_object() {
+        return Some(arguments.clone());
+    }
+    let raw = arguments.as_str()?;
+    serde_json::from_str(raw).ok()
 }
 
 fn emit_context_lines(context: &[MessageContext]) {

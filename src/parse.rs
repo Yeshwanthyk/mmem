@@ -22,6 +22,10 @@ struct Meta {
     workspace: Option<String>,
 }
 
+pub fn extract_message(value: &Value) -> Option<ParsedMessage> {
+    format_session_entry(value)
+}
+
 pub fn parse_jsonl(input: &str) -> Result<ParsedSession, ParseError> {
     let mut meta = Meta::default();
     let mut messages = Vec::new();
