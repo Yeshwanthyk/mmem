@@ -3,6 +3,7 @@ mod cli;
 use clap::Parser;
 use mmem::index::init_schema;
 use mmem::query::{FindFilters, find_sessions};
+use mmem::scan::index_root;
 use rusqlite::Connection;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
@@ -17,17 +18,43 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = cli::Cli::parse();
     match cli.command {
+        cli::Command::Index(args) => handle_index(args),
         cli::Command::Find(args) => handle_find(args),
     }
 }
 
-fn handle_find(args: cli::FindArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn open_db() -> Result<Connection, Box<dyn std::error::Error>> {
     let db_path = cli::default_db_path();
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    let conn = Connection::open(db_path)?;
+    Ok(Connection::open(db_path)?)
+}
+
+fn handle_index(args: cli::IndexArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = open_db()?;
+    init_schema(&conn)?;
+
+    let root = args.root.unwrap_or_else(cli::default_sessions_root);
+    let stats = index_root(&mut conn, &root, args.full)?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&stats)?);
+        return Ok(());
+    }
+
+    println!("scanned: {}", stats.scanned);
+    println!("indexed: {}", stats.indexed);
+    println!("skipped: {}", stats.skipped);
+    println!("removed: {}", stats.removed);
+    println!("parse_errors: {}", stats.parse_errors);
+
+    Ok(())
+}
+
+fn handle_find(args: cli::FindArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = open_db()?;
     init_schema(&conn)?;
 
     let mut filters = FindFilters {

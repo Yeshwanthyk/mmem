@@ -10,3 +10,7 @@ thiserror = "1"
 clap = { version = "4", features = ["derive"] }
 time = { version = "0.3", features = ["formatting"] }
 rusqlite = { version = "0.31", features = ["bundled-full"] }
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
