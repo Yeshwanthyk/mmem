@@ -1,5 +1,5 @@
 use crate::model::SessionRecord;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, Transaction, params};
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS sessions (
@@ -49,6 +49,11 @@ pub fn init_schema(conn: &Connection) -> Result<(), IndexError> {
     Ok(())
 }
 
+pub fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
+    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+    Ok(())
+}
+
 pub fn load_indexed_sessions(conn: &Connection) -> Result<Vec<IndexedSession>, IndexError> {
     let mut stmt = conn.prepare("SELECT path, mtime, size FROM sessions")?;
     let rows = stmt.query_map([], |row| {
@@ -69,7 +74,12 @@ pub fn load_indexed_sessions(conn: &Connection) -> Result<Vec<IndexedSession>, I
 
 pub fn upsert_session(conn: &mut Connection, record: &SessionRecord) -> Result<(), IndexError> {
     let tx = conn.transaction()?;
+    upsert_session_tx(&tx, record)?;
+    tx.commit()?;
+    Ok(())
+}
 
+pub fn upsert_session_tx(tx: &Transaction<'_>, record: &SessionRecord) -> Result<(), IndexError> {
     tx.execute(
         "INSERT INTO sessions (
             path,
@@ -119,16 +129,19 @@ pub fn upsert_session(conn: &mut Connection, record: &SessionRecord) -> Result<(
         params![&record.content, &record.path],
     )?;
 
-    tx.commit()?;
     Ok(())
 }
 
 pub fn remove_session(conn: &mut Connection, path: &str) -> Result<(), IndexError> {
     let tx = conn.transaction()?;
+    remove_session_tx(&tx, path)?;
+    tx.commit()?;
+    Ok(())
+}
 
+pub fn remove_session_tx(tx: &Transaction<'_>, path: &str) -> Result<(), IndexError> {
     tx.execute("DELETE FROM sessions_fts WHERE path = ?1", params![path])?;
     tx.execute("DELETE FROM sessions WHERE path = ?1", params![path])?;
 
-    tx.commit()?;
     Ok(())
 }

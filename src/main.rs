@@ -2,7 +2,7 @@ mod cli;
 
 use clap::Parser;
 use mmem::doctor::run_doctor;
-use mmem::index::init_schema;
+use mmem::index::{configure_connection, init_schema};
 use mmem::query::{FindFilters, find_sessions};
 use mmem::scan::index_root;
 use mmem::stats::load_stats;
@@ -33,7 +33,9 @@ fn open_db() -> Result<Connection, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(parent)?;
     }
 
-    Ok(Connection::open(db_path)?)
+    let conn = Connection::open(db_path)?;
+    configure_connection(&conn)?;
+    Ok(conn)
 }
 
 fn handle_index(args: cli::IndexArgs) -> Result<(), Box<dyn std::error::Error>> {

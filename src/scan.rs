@@ -1,4 +1,4 @@
-use crate::index::{load_indexed_sessions, remove_session, upsert_session};
+use crate::index::{load_indexed_sessions, remove_session_tx, upsert_session_tx};
 use crate::model::ParsedSession;
 use crate::parse::{parse_json, parse_jsonl, parse_markdown};
 use rusqlite::Connection;
@@ -49,6 +49,14 @@ impl From<crate::index::IndexError> for ScanError {
     }
 }
 
+impl From<rusqlite::Error> for ScanError {
+    fn from(source: rusqlite::Error) -> Self {
+        Self::Index {
+            source: source.into(),
+        }
+    }
+}
+
 pub fn index_root(conn: &mut Connection, root: &Path, full: bool) -> Result<ScanStats, ScanError> {
     let mut stats = ScanStats::default();
 
@@ -59,6 +67,7 @@ pub fn index_root(conn: &mut Connection, root: &Path, full: bool) -> Result<Scan
     }
 
     let mut seen = HashSet::new();
+    let tx = conn.transaction()?;
 
     for entry in WalkDir::new(root) {
         let entry = entry?;
@@ -104,17 +113,18 @@ pub fn index_root(conn: &mut Connection, root: &Path, full: bool) -> Result<Scan
         };
 
         let record = parsed.into_record(path_str, mtime, size, None);
-        upsert_session(conn, &record)?;
+        upsert_session_tx(&tx, &record)?;
         stats.indexed += 1;
     }
 
     for (path, _) in existing_map {
         if !seen.contains(&path) {
-            remove_session(conn, &path)?;
+            remove_session_tx(&tx, &path)?;
             stats.removed += 1;
         }
     }
 
+    tx.commit()?;
     Ok(stats)
 }
 
