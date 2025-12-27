@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSession {
     pub created_at: Option<String>,
@@ -62,4 +64,15 @@ pub struct SessionRecord {
     pub message_count: i64,
     pub snippet: String,
     pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionHit {
+    pub path: String,
+    pub title: Option<String>,
+    pub agent: Option<String>,
+    pub workspace: Option<String>,
+    pub last_message_at: Option<String>,
+    pub snippet: Option<String>,
+    pub score: f64,
 }
