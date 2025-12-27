@@ -50,7 +50,8 @@ pub fn init_schema(conn: &Connection) -> Result<(), IndexError> {
 }
 
 pub fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
-    conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())
 }
 
