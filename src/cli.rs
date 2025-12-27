@@ -1,4 +1,4 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
@@ -12,7 +12,7 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Index(IndexArgs),
-    Find(FindArgs),
+    Find(Box<FindArgs>),
     Stats(StatsArgs),
     Doctor(DoctorArgs),
 }
@@ -25,6 +25,12 @@ pub struct IndexArgs {
     pub root: Option<PathBuf>,
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum FindScopeArg {
+    Session,
+    Message,
 }
 
 #[derive(Debug, Args)]
@@ -40,10 +46,28 @@ pub struct FindArgs {
     pub agent: Option<String>,
     #[arg(long)]
     pub workspace: Option<String>,
-    #[arg(long, default_value_t = 10)]
-    pub limit: usize,
+    #[arg(long, alias = "project")]
+    pub repo: Option<String>,
     #[arg(long)]
+    pub branch: Option<String>,
+    #[arg(long)]
+    pub role: Option<String>,
+    #[arg(long)]
+    pub include_assistant: bool,
+    #[arg(long, default_value_t = 0)]
+    pub around: usize,
+    #[arg(long, value_enum, default_value_t = FindScopeArg::Message)]
+    pub scope: FindScopeArg,
+    #[arg(long, default_value_t = 5)]
+    pub limit: usize,
+    #[arg(long, conflicts_with = "jsonl")]
     pub json: bool,
+    #[arg(long, conflicts_with = "json")]
+    pub jsonl: bool,
+    #[arg(long, value_delimiter = ',')]
+    pub fields: Option<Vec<String>>,
+    #[arg(long)]
+    pub snippet: bool,
 }
 
 #[derive(Debug, Args)]
