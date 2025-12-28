@@ -4,11 +4,11 @@ use clap::Parser;
 use mmem::doctor::run_doctor;
 use mmem::index::{configure_connection, init_schema};
 use mmem::model::{MessageContext, MessageHit, SessionHit};
-use mmem::query::{FindFilters, FindScope, find_messages, find_sessions};
+use mmem::query::{FindFilters, FindScope, QueryMode, find_messages, find_sessions};
 use mmem::scan::index_root;
 use mmem::session::{
     SessionEntry, ToolCallMatch, extract_tool_calls, load_entry_by_line, load_entry_by_turn,
-    scan_tool_calls,
+    resolve_session_path, scan_tool_calls,
 };
 use mmem::stats::load_stats;
 use rusqlite::Connection;
@@ -101,6 +101,7 @@ fn handle_find(args: cli::FindArgs) -> Result<(), Box<dyn std::error::Error>> {
         limit: args.limit,
         around,
         scope,
+        query_mode: if args.fts { QueryMode::Fts } else { QueryMode::Literal },
     };
 
     if filters.after.is_none()
@@ -140,19 +141,22 @@ fn handle_show(args: cli::ShowArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let mut out = std::io::BufWriter::new(std::io::stdout());
 
+    let root = cli::default_sessions_root();
+    let path = resolve_session_path(&args.target, &root)?;
+
     if let Some(turn) = args.turn {
-        let entry = load_entry_by_turn(&args.path, turn)?;
+        let entry = load_entry_by_turn(&path, turn)?;
         emit_show_entry(&mut out, &entry, tool_filter, args.extract, args.json)?;
         return Ok(());
     }
 
     if let Some(line) = args.line {
-        let entry = load_entry_by_line(&args.path, line)?;
+        let entry = load_entry_by_line(&path, line)?;
         emit_show_entry(&mut out, &entry, tool_filter, args.extract, args.json)?;
         return Ok(());
     }
 
-    let matches = scan_tool_calls(&args.path, tool_filter, args.limit)?;
+    let matches = scan_tool_calls(&path, tool_filter, args.limit)?;
     if args.json {
         let values: Vec<Value> = matches.into_iter().map(tool_match_to_json).collect();
         let _ = writeln!(out, "{}", serde_json::to_string_pretty(&values)?);

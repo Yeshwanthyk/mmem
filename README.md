@@ -20,14 +20,17 @@ Requires Rust 1.85+ (edition 2024).
 # Index all sessions (incremental by default)
 mmem index
 
-# Search for messages mentioning "database migration"
-mmem find "database migration"
+# Search for literal text (punctuation safe)
+mmem find "quickdiff 2025-12-27"
 
 # Search within last 7 days
 mmem find "rust async" --days 7
 
 # Filter by repository
 mmem find "error handling" --repo my-project
+
+# Use raw FTS5 query syntax
+mmem find "title:rust AND async" --fts
 
 # Show tool calls from a specific session
 mmem show ~/.config/marvin/sessions/path/session.jsonl
@@ -52,7 +55,7 @@ mmem index --json       # JSON output
 
 ### `find`
 
-Full-text search across sessions or messages.
+Search across sessions or messages (literal by default).
 
 ```bash
 mmem find <query> [options]
@@ -75,6 +78,7 @@ mmem find <query> [options]
 | `--role ROLE` | Filter by message role (default: user) |
 | `--include-assistant` | Include assistant messages |
 | `--limit N` | Max results (default: 5) |
+| `--fts` | Use raw FTS5 query syntax (advanced) |
 
 **Output:**
 | Flag | Description |
@@ -100,16 +104,19 @@ mmem find "refactor" --repo myapp --json
 # Get context around matches
 mmem find "bug fix" --around 2 --include-assistant
 
+# Use raw FTS5 query syntax
+mmem find "title:rust AND async" --fts
+
 # Session-level search
 mmem find "migration" --scope session --limit 10
 ```
 
 ### `show`
 
-Inspect a session file's tool calls.
+Inspect tool calls in a session JSONL (path or session id prefix).
 
 ```bash
-mmem show <path> [options]
+mmem show <path|session_id> [options]
 ```
 
 **Options:**
@@ -126,6 +133,9 @@ mmem show <path> [options]
 ```bash
 # List all read tool calls (default)
 mmem show session.jsonl
+
+# Show by session id prefix
+mmem show 1766632198584
 
 # Show all tool calls from turn 5
 mmem show session.jsonl --turn 5

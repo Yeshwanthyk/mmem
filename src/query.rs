@@ -79,6 +79,18 @@ impl Default for FindScope {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueryMode {
+    Literal,
+    Fts,
+}
+
+impl Default for QueryMode {
+    fn default() -> Self {
+        Self::Literal
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct FindFilters {
     pub agent: Option<String>,
@@ -91,6 +103,7 @@ pub struct FindFilters {
     pub limit: usize,
     pub around: usize,
     pub scope: FindScope,
+    pub query_mode: QueryMode,
 }
 
 pub fn find_sessions(
@@ -98,7 +111,7 @@ pub fn find_sessions(
     query: &str,
     filters: &FindFilters,
 ) -> Result<Vec<SessionHit>, QueryError> {
-    let query = normalize_query(query)?;
+    let query = normalize_query(query, filters.query_mode)?;
     let limit = normalize_limit(filters.limit);
 
     let mut stmt = conn.prepare(FIND_SESSIONS_SQL)?;
@@ -142,7 +155,7 @@ pub fn find_messages(
     query: &str,
     filters: &FindFilters,
 ) -> Result<Vec<MessageHit>, QueryError> {
-    let query = normalize_query(query)?;
+    let query = normalize_query(query, filters.query_mode)?;
     let limit = normalize_limit(filters.limit);
 
     let mut stmt = conn.prepare(FIND_MESSAGES_SQL)?;
@@ -227,14 +240,46 @@ fn load_context(
     Ok(context)
 }
 
-fn normalize_query(query: &str) -> Result<&str, QueryError> {
+fn normalize_query(query: &str, mode: QueryMode) -> Result<String, QueryError> {
     let query = query.trim();
     if query.is_empty() {
         return Err(QueryError::EmptyQuery);
     }
-    Ok(query)
+    match mode {
+        QueryMode::Literal => Ok(build_literal_query(query)),
+        QueryMode::Fts => Ok(query.to_string()),
+    }
+}
+
+fn build_literal_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn normalize_limit(limit: usize) -> i64 {
     (if limit == 0 { 5 } else { limit }) as i64
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{QueryMode, normalize_query};
+
+    #[test]
+    fn literal_query_quotes_tokens() {
+        let query = normalize_query("quickdiff 2025-12-27", QueryMode::Literal)
+            .expect("literal query");
+        assert_eq!(query, "\"quickdiff\" \"2025-12-27\"");
+    }
+
+    #[test]
+    fn fts_query_keeps_raw_input() {
+        let query = normalize_query("title:rust AND async", QueryMode::Fts)
+            .expect("fts query");
+        assert_eq!(query, "title:rust AND async");
+    }
 }

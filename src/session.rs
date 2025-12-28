@@ -3,6 +3,7 @@ use crate::parse::extract_message;
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use walkdir::WalkDir;
 
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
@@ -35,8 +36,12 @@ pub enum SessionError {
         line: usize,
         source: serde_json::Error,
     },
-    #[error("unsupported session format: {path}")]
+    #[error("unsupported session format: {path} (expected .jsonl)")]
     UnsupportedFormat { path: PathBuf },
+    #[error("session not found: {input}")]
+    NotFound { input: String },
+    #[error("multiple sessions match {input}: {matches}")]
+    Ambiguous { input: String, matches: String },
     #[error("turn {turn} out of range (messages: {available})")]
     TurnOutOfRange { turn: usize, available: usize },
     #[error("line {line} out of range")]
@@ -242,8 +247,87 @@ fn message_content(value: &Value) -> Option<&Vec<Value>> {
     value.get("content").and_then(|v| v.as_array())
 }
 
+pub fn resolve_session_path(input: &str, root: &Path) -> Result<PathBuf, SessionError> {
+    let expanded = expand_home_path(input);
+    if expanded.exists() {
+        return Ok(expanded);
+    }
+
+    if expanded.components().count() > 1 {
+        return Err(SessionError::NotFound {
+            input: input.to_string(),
+        });
+    }
+
+    let matches = collect_session_matches(input, root);
+    match matches.len() {
+        0 => Err(SessionError::NotFound {
+            input: input.to_string(),
+        }),
+        1 => Ok(matches[0].clone()),
+        _ => Err(SessionError::Ambiguous {
+            input: input.to_string(),
+            matches: format_matches(&matches),
+        }),
+    }
+}
+
+fn collect_session_matches(prefix: &str, root: &Path) -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let path = entry.path();
+        if !is_jsonl(path) {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name.starts_with(prefix) {
+            matches.push(path.to_path_buf());
+        }
+    }
+    matches.sort();
+    matches
+}
+
+fn format_matches(matches: &[PathBuf]) -> String {
+    let mut display: Vec<String> = matches
+        .iter()
+        .take(5)
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    if matches.len() > 5 {
+        display.push("...".to_string());
+    }
+    display.join(", ")
+}
+
+fn is_jsonl(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
+        .unwrap_or(false)
+}
+
+fn expand_home_path(path: &str) -> PathBuf {
+    if path == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join(stripped);
+    }
+    PathBuf::from(path)
+}
+
 fn ensure_jsonl(path: &Path) -> Result<(), SessionError> {
-    if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+    if is_jsonl(path) {
         return Ok(());
     }
 
