@@ -107,9 +107,11 @@ pub fn init_schema(conn: &Connection) -> Result<(), IndexError> {
 /// - synchronous=NORMAL: good durability/speed tradeoff
 /// - busy_timeout=5000ms: retry on lock contention instead of immediate failure
 pub fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
-    conn.pragma_update(None, "busy_timeout", 5000)?;
+    // busy_timeout and journal_mode return values when set
+    let _: i64 = conn.query_row("PRAGMA busy_timeout = 5000", [], |row| row.get(0))?;
     let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // synchronous doesn't return a value when set, use execute
+    conn.execute("PRAGMA synchronous = NORMAL", [])?;
     Ok(())
 }
 
