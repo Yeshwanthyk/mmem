@@ -34,3 +34,31 @@ pub fn load_stats(conn: &Connection) -> Result<StatsReport, StatsError> {
         parse_failures: None,
     })
 }
+
+#[derive(Debug, serde::Serialize)]
+pub struct AgentInfo {
+    pub name: String,
+    pub session_count: i64,
+}
+
+pub fn load_agents(conn: &Connection) -> Result<Vec<AgentInfo>, StatsError> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(agent, '(unknown)') as name, COUNT(*) as count 
+         FROM sessions 
+         GROUP BY agent 
+         ORDER BY count DESC",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(AgentInfo {
+            name: row.get(0)?,
+            session_count: row.get(1)?,
+        })
+    })?;
+
+    let mut agents = Vec::new();
+    for row in rows {
+        agents.push(row?);
+    }
+    Ok(agents)
+}

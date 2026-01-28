@@ -124,6 +124,9 @@ pub fn index_root(conn: &mut Connection, root: &Path, full: bool) -> Result<Scan
         };
 
         let (mut record, messages) = parsed.into_parts(path_str, mtime, size, None);
+        if record.agent.is_none() {
+            record.agent = infer_agent_from_root(root);
+        }
         let workspace_path = workspace_path_from_meta(record.workspace.as_deref())
             .or_else(|| decode_workspace_from_session_path(&path));
         let repo_info = infer_repo_info(workspace_path.as_deref(), &mut repo_cache);
@@ -197,6 +200,18 @@ fn expand_home(path: &str) -> Option<PathBuf> {
         return Some(PathBuf::from(home).join(stripped));
     }
     Some(PathBuf::from(path))
+}
+
+/// Infer agent name from the sessions root path.
+/// E.g., `~/.config/marvin/sessions` → "marvin"
+fn infer_agent_from_root(root: &Path) -> Option<String> {
+    let name = root.file_name()?.to_str()?;
+    if name == "sessions" {
+        // Use parent directory name (e.g., marvin, opencode)
+        root.parent()?.file_name()?.to_str().map(|s| s.to_string())
+    } else {
+        Some(name.to_string())
+    }
 }
 
 fn decode_workspace_from_session_path(session_path: &Path) -> Option<PathBuf> {

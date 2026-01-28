@@ -11,6 +11,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    #[command(about = "Index sessions from disk into SQLite")]
     Index(IndexArgs),
     #[command(
         about = "Search sessions and messages",
@@ -32,15 +33,25 @@ pub enum Command {
   mmem show ~/.config/marvin/sessions/path/session.jsonl --extract"#,
     )]
     Show(ShowArgs),
+    #[command(about = "Show index statistics")]
     Stats(StatsArgs),
+    #[command(about = "List unique agents in the index")]
+    Agents(AgentsArgs),
+    #[command(about = "Check index health and configuration")]
     Doctor(DoctorArgs),
 }
 
 #[derive(Debug, Args)]
+pub struct AgentsArgs {
+    #[arg(long, help = "JSON output (machine-friendly)")]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
 pub struct IndexArgs {
-    #[arg(long)]
+    #[arg(long, help = "Full reindex (ignore mtime/size cache)")]
     pub full: bool,
-    #[arg(long)]
+    #[arg(long, help = "Sessions root directory")]
     pub root: Option<PathBuf>,
     #[arg(long, help = "JSON output (machine-friendly)")]
     pub json: bool,
@@ -56,29 +67,29 @@ pub enum FindScopeArg {
 pub struct FindArgs {
     #[arg(value_name = "QUERY", help = "Search query (literal by default)")]
     pub query: String,
-    #[arg(long)]
+    #[arg(long, help = "Filter to last N days")]
     pub days: Option<u32>,
-    #[arg(long)]
+    #[arg(long, help = "Filter messages before date (ISO8601)")]
     pub before: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter messages after date (ISO8601)")]
     pub after: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by agent name")]
     pub agent: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by workspace path")]
     pub workspace: Option<String>,
-    #[arg(long, alias = "project")]
+    #[arg(long, alias = "project", help = "Filter by repo name or path")]
     pub repo: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by git branch")]
     pub branch: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by message role (user/assistant)")]
     pub role: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Include assistant messages (default: user only)")]
     pub include_assistant: bool,
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 0, help = "Context messages around match")]
     pub around: usize,
-    #[arg(long, value_enum, default_value_t = FindScopeArg::Message)]
+    #[arg(long, value_enum, default_value_t = FindScopeArg::Message, help = "Search scope")]
     pub scope: FindScopeArg,
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 5, help = "Max results to return")]
     pub limit: usize,
     #[arg(long, help = "Use raw FTS5 query syntax (advanced)")]
     pub fts: bool,
@@ -86,25 +97,25 @@ pub struct FindArgs {
     pub json: bool,
     #[arg(long, conflicts_with = "json", help = "JSON Lines output (machine-friendly)")]
     pub jsonl: bool,
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', help = "Output fields (comma-separated)")]
     pub fields: Option<Vec<String>>,
-    #[arg(long)]
+    #[arg(long, help = "Show text snippet in results")]
     pub snippet: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct ShowArgs {
-    #[arg(value_name = "PATH|SESSION_ID")]
+    #[arg(value_name = "PATH|SESSION_ID", help = "Session file path or ID prefix")]
     pub target: String,
-    #[arg(long, conflicts_with = "line")]
+    #[arg(long, conflicts_with = "line", help = "Show specific turn by index")]
     pub turn: Option<usize>,
-    #[arg(long, conflicts_with = "turn")]
+    #[arg(long, conflicts_with = "turn", help = "Show specific line number")]
     pub line: Option<usize>,
-    #[arg(long)]
+    #[arg(long, help = "Filter by tool name")]
     pub tool: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Max tool calls to show")]
     pub limit: Option<usize>,
-    #[arg(long, help = "Extract and show file contents from read tool calls") ]
+    #[arg(long, help = "Extract and show file contents from read tool calls")]
     pub extract: bool,
     #[arg(long, help = "JSON output (machine-friendly)")]
     pub json: bool,

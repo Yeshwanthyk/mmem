@@ -10,7 +10,7 @@ use mmem::session::{
     SessionEntry, ToolCallMatch, extract_tool_calls, load_entry_by_line, load_entry_by_turn,
     resolve_session_path, scan_tool_calls,
 };
-use mmem::stats::load_stats;
+use mmem::stats::{load_agents, load_stats};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
@@ -35,6 +35,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         cli::Command::Find(args) => handle_find(*args),
         cli::Command::Show(args) => handle_show(args),
         cli::Command::Stats(args) => handle_stats(args),
+        cli::Command::Agents(args) => handle_agents(args),
         cli::Command::Doctor(args) => handle_doctor(args),
     }
 }
@@ -208,6 +209,29 @@ fn handle_stats(args: cli::StatsArgs) -> Result<(), Box<dyn std::error::Error>> 
     match stats.parse_failures {
         Some(count) => println!("parse_failures: {}", count),
         None => println!("parse_failures: unknown"),
+    }
+
+    Ok(())
+}
+
+fn handle_agents(args: cli::AgentsArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+
+    let agents = load_agents(&conn)?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&agents)?);
+        return Ok(());
+    }
+
+    if agents.is_empty() {
+        println!("no agents found");
+        return Ok(());
+    }
+
+    for agent in agents {
+        println!("{}: {} sessions", agent.name, agent.session_count);
     }
 
     Ok(())
