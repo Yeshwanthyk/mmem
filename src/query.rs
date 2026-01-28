@@ -1,3 +1,24 @@
+//! FTS5 full-text search and filter application.
+//!
+//! This module implements search queries against the SQLite FTS5 index,
+//! with support for various filters (agent, workspace, repo, date range, etc.).
+//!
+//! # Query Modes
+//!
+//! - **Literal** (default): Each word is quoted for exact matching. Safe for
+//!   dates and punctuation like `"2025-01-28"`.
+//! - **FTS**: Raw FTS5 syntax for advanced queries like `title:rust AND async`.
+//!
+//! # Key Functions
+//!
+//! - [`find_sessions`]: Search session-level content
+//! - [`find_messages`]: Search individual messages with optional context
+//!
+//! # Error Handling
+//!
+//! FTS5 syntax errors (in `--fts` mode) produce [`QueryError::InvalidFtsSyntax`]
+//! with the original query for debugging.
+
 use crate::model::{MessageContext, MessageHit, SessionHit};
 use rusqlite::{Connection, params};
 
@@ -57,6 +78,11 @@ LIMIT ?9;
 pub enum QueryError {
     #[error("query is empty")]
     EmptyQuery,
+    #[error("invalid fts5 syntax for query {query:?}: {source}")]
+    InvalidFtsSyntax {
+        query: String,
+        source: rusqlite::Error,
+    },
     #[error("sqlite error: {source}")]
     Sqlite { source: rusqlite::Error },
 }
@@ -67,28 +93,18 @@ impl From<rusqlite::Error> for QueryError {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FindScope {
     Session,
+    #[default]
     Message,
 }
 
-impl Default for FindScope {
-    fn default() -> Self {
-        Self::Message
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QueryMode {
+    #[default]
     Literal,
     Fts,
-}
-
-impl Default for QueryMode {
-    fn default() -> Self {
-        Self::Literal
-    }
 }
 
 #[derive(Debug, Default)]
@@ -106,6 +122,24 @@ pub struct FindFilters {
     pub query_mode: QueryMode,
 }
 
+fn map_rusqlite_error(error: rusqlite::Error, query: &str, mode: QueryMode) -> QueryError {
+    if mode == QueryMode::Fts && is_fts_syntax_error(&error) {
+        return QueryError::InvalidFtsSyntax {
+            query: query.to_string(),
+            source: error,
+        };
+    }
+
+    QueryError::Sqlite { source: error }
+}
+
+fn is_fts_syntax_error(error: &rusqlite::Error) -> bool {
+    let message = error.to_string();
+    (message.contains("fts5") && message.contains("syntax error"))
+        || message.contains("malformed MATCH expression")
+        || message.contains("parse error in MATCH expression")
+}
+
 pub fn find_sessions(
     conn: &Connection,
     query: &str,
@@ -113,38 +147,41 @@ pub fn find_sessions(
 ) -> Result<Vec<SessionHit>, QueryError> {
     let query = normalize_query(query, filters.query_mode)?;
     let limit = normalize_limit(filters.limit);
+    let mode = filters.query_mode;
 
     let mut stmt = conn.prepare(FIND_SESSIONS_SQL)?;
-    let rows = stmt.query_map(
-        params![
-            query,
-            &filters.agent,
-            &filters.workspace,
-            &filters.repo,
-            &filters.branch,
-            &filters.after,
-            &filters.before,
-            limit,
-        ],
-        |row| {
-            Ok(SessionHit {
-                path: row.get(0)?,
-                title: row.get(1)?,
-                agent: row.get(2)?,
-                workspace: row.get(3)?,
-                repo_root: row.get(4)?,
-                repo_name: row.get(5)?,
-                branch: row.get(6)?,
-                last_message_at: row.get(7)?,
-                snippet: row.get(8)?,
-                score: row.get(9)?,
-            })
-        },
-    )?;
+    let rows = stmt
+        .query_map(
+            params![
+                &query,
+                &filters.agent,
+                &filters.workspace,
+                &filters.repo,
+                &filters.branch,
+                &filters.after,
+                &filters.before,
+                limit,
+            ],
+            |row| {
+                Ok(SessionHit {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    agent: row.get(2)?,
+                    workspace: row.get(3)?,
+                    repo_root: row.get(4)?,
+                    repo_name: row.get(5)?,
+                    branch: row.get(6)?,
+                    last_message_at: row.get(7)?,
+                    snippet: row.get(8)?,
+                    score: row.get(9)?,
+                })
+            },
+        )
+        .map_err(|err| map_rusqlite_error(err, &query, mode))?;
 
     let mut results = Vec::new();
     for row in rows {
-        results.push(row?);
+        results.push(row.map_err(|err| map_rusqlite_error(err, &query, mode))?);
     }
 
     Ok(results)
@@ -157,42 +194,45 @@ pub fn find_messages(
 ) -> Result<Vec<MessageHit>, QueryError> {
     let query = normalize_query(query, filters.query_mode)?;
     let limit = normalize_limit(filters.limit);
+    let mode = filters.query_mode;
 
     let mut stmt = conn.prepare(FIND_MESSAGES_SQL)?;
-    let rows = stmt.query_map(
-        params![
-            query,
-            &filters.agent,
-            &filters.workspace,
-            &filters.repo,
-            &filters.branch,
-            &filters.role,
-            &filters.after,
-            &filters.before,
-            limit,
-        ],
-        |row| {
-            Ok(MessageHit {
-                path: row.get(0)?,
-                turn_index: row.get(1)?,
-                role: row.get(2)?,
-                timestamp: row.get(3)?,
-                text: row.get(4)?,
-                title: row.get(5)?,
-                agent: row.get(6)?,
-                workspace: row.get(7)?,
-                repo_root: row.get(8)?,
-                repo_name: row.get(9)?,
-                branch: row.get(10)?,
-                score: row.get(11)?,
-                context: None,
-            })
-        },
-    )?;
+    let rows = stmt
+        .query_map(
+            params![
+                &query,
+                &filters.agent,
+                &filters.workspace,
+                &filters.repo,
+                &filters.branch,
+                &filters.role,
+                &filters.after,
+                &filters.before,
+                limit,
+            ],
+            |row| {
+                Ok(MessageHit {
+                    path: row.get(0)?,
+                    turn_index: row.get(1)?,
+                    role: row.get(2)?,
+                    timestamp: row.get(3)?,
+                    text: row.get(4)?,
+                    title: row.get(5)?,
+                    agent: row.get(6)?,
+                    workspace: row.get(7)?,
+                    repo_root: row.get(8)?,
+                    repo_name: row.get(9)?,
+                    branch: row.get(10)?,
+                    score: row.get(11)?,
+                    context: None,
+                })
+            },
+        )
+        .map_err(|err| map_rusqlite_error(err, &query, mode))?;
 
     let mut results = Vec::new();
     for row in rows {
-        let mut hit = row?;
+        let mut hit = row.map_err(|err| map_rusqlite_error(err, &query, mode))?;
         if filters.around > 0 {
             hit.context = Some(load_context(
                 conn,

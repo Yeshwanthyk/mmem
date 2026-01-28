@@ -1,3 +1,13 @@
+//! Command-line argument parsing with clap.
+//!
+//! Defines the CLI structure for mmem commands:
+//! - `index`: Index sessions from disk
+//! - `find`: Search sessions and messages
+//! - `show`: Inspect tool calls in a session
+//! - `stats`: Show index statistics
+//! - `agents`: List unique agents
+//! - `doctor`: Check index health
+
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 

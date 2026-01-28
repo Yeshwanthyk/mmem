@@ -1,3 +1,15 @@
+//! Health check diagnostics for mmem configuration.
+//!
+//! The doctor command checks:
+//! - Sessions root directory exists
+//! - Database file exists and is readable
+//! - Schema is valid and queryable
+//! - FTS5 extension is available
+//!
+//! # Key Functions
+//!
+//! - [`run_doctor`]: Generate a diagnostic report
+
 use crate::index::init_schema;
 use crate::stats::load_stats;
 use rusqlite::Connection;

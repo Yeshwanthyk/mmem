@@ -1,3 +1,21 @@
+//! Core data structures for session indexing and search.
+//!
+//! # Parse-Time Types
+//!
+//! - [`ParsedMessage`]: A message extracted during parsing
+//! - [`ParsedSession`]: A fully parsed session before database insertion
+//!
+//! # Database Types
+//!
+//! - [`SessionRecord`]: Session data for database storage
+//! - [`MessageRecord`]: Message data for database storage
+//!
+//! # Query Result Types
+//!
+//! - [`SessionHit`]: Search result for session-scope queries
+//! - [`MessageHit`]: Search result for message-scope queries
+//! - [`MessageContext`]: Surrounding messages for context display
+
 use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

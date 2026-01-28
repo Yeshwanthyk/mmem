@@ -1,7 +1,45 @@
+//! Session file parsing for JSONL, JSON, and Markdown formats.
+//!
+//! This module extracts messages, metadata, and content from AI session files
+//! for FTS5 indexing. It handles multiple session formats from different AI agents.
+//!
+//! # Key Functions
+//!
+//! - [`parse_jsonl`]: Parse newline-delimited JSON session files
+//! - [`parse_json`]: Parse single JSON session files
+//! - [`parse_markdown`]: Parse markdown conversation logs
+//! - [`extract_message`]: Extract a single message from a JSON value
+//!
+//! # Turn Index Semantics
+//!
+//! Messages are indexed including toolCall-only entries (entries with no text content
+//! but containing tool invocations). This ensures consistency between:
+//! - Database `messages.turn_index`
+//! - `mmem show --turn` command
+//!
+//! A toolCall-only message will have `text: ""` but still count as a turn.
+
 use crate::model::{ParsedMessage, ParsedSession};
 use serde_json::Value;
 
 const MAX_SNIPPET_LEN: usize = 240;
+
+/// JSON type discriminator constants used in session formats.
+mod json_types {
+    pub const SESSION_META: &str = "session_meta";
+    pub const RESPONSE_ITEM: &str = "response_item";
+    pub const MESSAGE: &str = "message";
+    pub const INPUT_TEXT: &str = "input_text";
+    pub const TOOL_CALL: &str = "toolCall";
+}
+
+/// Check if a JSON value has a specific "type" field value.
+fn type_is(value: &Value, expected: &str) -> bool {
+    value
+        .get("type")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| t == expected)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -43,32 +81,27 @@ fn has_tool_call(value: &Value) -> bool {
         return false;
     };
 
-    content.iter().any(|item| {
-        item.get("type")
-            .and_then(|t| t.as_str())
-            .map(|t| t == "toolCall")
-            .unwrap_or(false)
-    })
+    content
+        .iter()
+        .any(|item| type_is(item, json_types::TOOL_CALL))
 }
 
-fn extract_content_array(value: &Value) -> Option<&Vec<Value>> {
+/// Extract content array from various JSON session formats.
+///
+/// Handles three common structures:
+/// - `{ "message": { "content": [...] } }` - Claude/Marvin format
+/// - `{ "type": json_types::RESPONSE_ITEM, "payload": { "type": json_types::MESSAGE, "content": [...] } }` - OpenAI format
+/// - `{ "content": [...] }` - Generic format
+pub(crate) fn extract_content_array(value: &Value) -> Option<&Vec<Value>> {
     if let Some(message) = value.get("message")
         && let Some(content) = message.get("content").and_then(|v| v.as_array())
     {
         return Some(content);
     }
 
-    if value
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|v| v == "response_item")
-        .unwrap_or(false)
+    if type_is(value, json_types::RESPONSE_ITEM)
         && let Some(payload) = value.get("payload")
-        && payload
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(|v| v == "message")
-            .unwrap_or(false)
+        && type_is(payload, json_types::MESSAGE)
         && let Some(content) = payload.get("content").and_then(|v| v.as_array())
     {
         return Some(content);
@@ -108,7 +141,7 @@ pub fn parse_jsonl(input: &str) -> Result<ParsedSession, ParseError> {
         })?;
 
         update_meta_from_value(&mut meta, &value);
-        if let Some(message) = format_session_entry(&value) {
+        if let Some(message) = extract_message(&value) {
             messages.push(message);
         }
     }
@@ -140,7 +173,7 @@ pub fn parse_json(input: &str) -> Result<ParsedSession, ParseError> {
     let mut messages = Vec::new();
     for entry in entries {
         update_meta_from_value(&mut meta, entry);
-        if let Some(message) = format_session_entry(entry) {
+        if let Some(message) = extract_message(entry) {
             messages.push(message);
         }
     }
@@ -207,20 +240,11 @@ fn build_parsed_session(messages: Vec<ParsedMessage>, mut meta: Meta) -> ParsedS
 }
 
 fn format_session_entry(value: &Value) -> Option<ParsedMessage> {
-    if value
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|v| v == "session_meta")
-        .unwrap_or(false)
-    {
+    if type_is(value, json_types::SESSION_META) {
         return None;
     }
 
-    if value
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|v| v == "response_item")
-        .unwrap_or(false)
+    if type_is(value, json_types::RESPONSE_ITEM)
         && let Some(payload) = value.get("payload")
         && let Some(mut message) = message_from_object(payload)
     {
@@ -309,11 +333,7 @@ fn coerce_content(value: &Value) -> Option<String> {
         };
     }
 
-    if value
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|v| v == "input_text")
-        .unwrap_or(false)
+    if type_is(value, json_types::INPUT_TEXT)
         && let Some(text) = value.get("text").and_then(|v| v.as_str())
     {
         let trimmed = text.trim();

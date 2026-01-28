@@ -1,3 +1,10 @@
+//! Index statistics and agent listing.
+//!
+//! # Key Functions
+//!
+//! - [`load_stats`]: Get session count and date bounds
+//! - [`load_agents`]: List unique agents with session counts
+
 use rusqlite::Connection;
 
 #[derive(Debug, serde::Serialize)]

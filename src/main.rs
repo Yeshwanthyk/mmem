@@ -15,7 +15,7 @@ use rusqlite::Connection;
 use serde_json::{Map, Value};
 use std::collections::HashSet;
 use std::io::Write;
-use std::path::PathBuf;
+
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 
@@ -479,7 +479,7 @@ fn emit_read_extract(
     out: &mut dyn Write,
     read_args: &ReadArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resolved = expand_home_path(&read_args.path);
+    let resolved = mmem::util::expand_home(&read_args.path);
     let content = match std::fs::read_to_string(&resolved) {
         Ok(content) => content,
         Err(err) => {
@@ -540,20 +540,6 @@ fn normalize_arguments(arguments: &Value) -> Option<Value> {
     }
     let raw = arguments.as_str()?;
     serde_json::from_str(raw).ok()
-}
-
-fn expand_home_path(path: &str) -> PathBuf {
-    if path == "~" {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(path));
-    }
-    if let Some(stripped) = path.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(stripped);
-    }
-    PathBuf::from(path)
 }
 
 fn emit_context_lines(context: &[MessageContext]) {
@@ -713,4 +699,66 @@ fn trim_output(text: &str) -> String {
         return compacted;
     }
     compacted.chars().take(MAX_OUTPUT_LEN).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod normalize_role_filter_tests {
+        use super::*;
+
+        #[test]
+        fn defaults_to_user_without_include_assistant() {
+            let result = normalize_role_filter(None, false);
+            assert_eq!(result, Some("user".to_string()));
+        }
+
+        #[test]
+        fn returns_none_with_include_assistant_and_no_role() {
+            let result = normalize_role_filter(None, true);
+            assert_eq!(result, None);
+        }
+
+        #[test]
+        fn respects_explicit_role() {
+            let result = normalize_role_filter(Some("assistant"), false);
+            assert_eq!(result, Some("assistant".to_string()));
+        }
+
+        #[test]
+        fn normalizes_role_to_lowercase() {
+            let result = normalize_role_filter(Some("USER"), false);
+            assert_eq!(result, Some("user".to_string()));
+        }
+
+        #[test]
+        fn trims_whitespace() {
+            let result = normalize_role_filter(Some("  user  "), false);
+            assert_eq!(result, Some("user".to_string()));
+        }
+    }
+
+    mod trim_output_tests {
+        use super::*;
+
+        #[test]
+        fn preserves_short_text() {
+            let result = trim_output("short text");
+            assert_eq!(result, "short text");
+        }
+
+        #[test]
+        fn truncates_long_text() {
+            let long = "a".repeat(200);
+            let result = trim_output(&long);
+            assert_eq!(result.len(), MAX_OUTPUT_LEN);
+        }
+
+        #[test]
+        fn collapses_whitespace() {
+            let result = trim_output("hello   world\n\ntest");
+            assert_eq!(result, "hello world test");
+        }
+    }
 }

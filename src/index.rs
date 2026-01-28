@@ -1,3 +1,28 @@
+//! SQLite schema management and CRUD operations.
+//!
+//! This module defines the database schema and provides functions for
+//! upserting/removing sessions and messages, with FTS5 index maintenance.
+//!
+//! # Schema
+//!
+//! - `sessions`: Session metadata (path, agent, workspace, timestamps, etc.)
+//! - `sessions_fts`: FTS5 index of session content
+//! - `messages`: Individual messages with turn indices
+//! - `messages_fts`: FTS5 index of message text
+//!
+//! # Key Functions
+//!
+//! - [`init_schema`]: Create tables and indexes
+//! - [`configure_connection`]: Set WAL mode, busy timeout, etc.
+//! - [`upsert_session`] / [`upsert_session_tx`]: Insert or update a session
+//! - [`replace_messages_tx`]: Replace all messages for a session
+//! - [`remove_session`] / [`remove_session_tx`]: Delete a session and its messages
+//!
+//! # Transaction Pattern
+//!
+//! Functions with `_tx` suffix operate within an existing transaction.
+//! Non-`_tx` variants create their own transaction.
+
 use crate::model::{MessageRecord, SessionRecord};
 use rusqlite::{Connection, Transaction, params};
 
@@ -42,6 +67,9 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 
 CREATE INDEX IF NOT EXISTS idx_sessions_last_message_at ON sessions(last_message_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_agent ON sessions(agent);
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace);
+CREATE INDEX IF NOT EXISTS idx_sessions_repo_name ON sessions(repo_name);
+CREATE INDEX IF NOT EXISTS idx_sessions_branch ON sessions(branch);
 CREATE INDEX IF NOT EXISTS idx_messages_session_turn ON messages(session_path, turn_index);
 "#;
 
@@ -72,7 +100,14 @@ pub fn init_schema(conn: &Connection) -> Result<(), IndexError> {
     Ok(())
 }
 
+/// Configure SQLite connection for optimal performance and concurrency.
+///
+/// Settings:
+/// - WAL mode: allows concurrent reads during writes
+/// - synchronous=NORMAL: good durability/speed tradeoff
+/// - busy_timeout=5000ms: retry on lock contention instead of immediate failure
 pub fn configure_connection(conn: &Connection) -> Result<(), IndexError> {
+    conn.pragma_update(None, "busy_timeout", 5000)?;
     let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())

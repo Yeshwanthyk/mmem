@@ -1,0 +1,14 @@
+# Clippy configuration for AI-friendly development
+# See ANALYSIS.md for rationale
+
+msrv = "1.85"
+
+# Cognitive complexity threshold - flag functions that are hard to reason about
+cognitive-complexity-threshold = 25
+
+# Function signature limits
+too-many-arguments-threshold = 7
+too-many-lines-threshold = 100
+
+# Avoid overly generic names that confuse AI
+single-char-binding-names-threshold = 4

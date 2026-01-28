@@ -1,5 +1,24 @@
+//! Session file inspection and tool call extraction.
+//!
+//! This module provides runtime inspection of JSONL session files without
+//! going through the database index. Used by the `mmem show` command.
+//!
+//! # Key Functions
+//!
+//! - [`load_entry_by_turn`]: Load a specific message by turn index
+//! - [`load_entry_by_line`]: Load a specific line from a session file
+//! - [`scan_tool_calls`]: Find all tool calls in a session
+//! - [`extract_tool_calls`]: Extract tool calls from a JSON message
+//! - [`resolve_session_path`]: Resolve a session ID prefix to a file path
+//!
+//! # Turn Index Semantics
+//!
+//! Turn indices match the database `messages.turn_index` and include all message
+//! events, including toolCall-only entries with no text content.
+
 use crate::model::ParsedMessage;
-use crate::parse::extract_message;
+use crate::parse::{extract_content_array, extract_message};
+use crate::util::expand_home;
 use serde_json::Value;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -177,7 +196,7 @@ pub fn scan_tool_calls(
 }
 
 pub fn extract_tool_calls(value: &Value) -> Vec<ToolCall> {
-    let Some(content) = message_content(value) else {
+    let Some(content) = extract_content_array(value) else {
         return Vec::new();
     };
 
@@ -221,34 +240,10 @@ fn build_entry(
     }
 }
 
-fn message_content(value: &Value) -> Option<&Vec<Value>> {
-    if let Some(message) = value.get("message")
-        && let Some(content) = message.get("content").and_then(|v| v.as_array())
-    {
-        return Some(content);
-    }
 
-    if value
-        .get("type")
-        .and_then(|v| v.as_str())
-        .map(|v| v == "response_item")
-        .unwrap_or(false)
-        && let Some(payload) = value.get("payload")
-        && payload
-            .get("type")
-            .and_then(|v| v.as_str())
-            .map(|v| v == "message")
-            .unwrap_or(false)
-        && let Some(content) = payload.get("content").and_then(|v| v.as_array())
-    {
-        return Some(content);
-    }
-
-    value.get("content").and_then(|v| v.as_array())
-}
 
 pub fn resolve_session_path(input: &str, root: &Path) -> Result<PathBuf, SessionError> {
-    let expanded = expand_home_path(input);
+    let expanded = expand_home(input);
     if expanded.exists() {
         return Ok(expanded);
     }
@@ -310,20 +305,6 @@ fn is_jsonl(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.eq_ignore_ascii_case("jsonl"))
         .unwrap_or(false)
-}
-
-fn expand_home_path(path: &str) -> PathBuf {
-    if path == "~" {
-        return std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(path));
-    }
-    if let Some(stripped) = path.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(stripped);
-    }
-    PathBuf::from(path)
 }
 
 fn ensure_jsonl(path: &Path) -> Result<(), SessionError> {

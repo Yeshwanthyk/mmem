@@ -1,3 +1,28 @@
+//! Filesystem scanning and incremental indexing.
+//!
+//! This module walks the sessions directory, parses session files, and
+//! updates the SQLite index. It supports incremental indexing by comparing
+//! file mtime/size against cached values.
+//!
+//! # Key Functions
+//!
+//! - [`index_root`]: Main entry point for indexing a sessions directory
+//!
+//! # Incremental Indexing
+//!
+//! Files are re-indexed only when mtime or size changes. Use `--full` to
+//! force a complete reindex.
+//!
+//! # Parse Failure Handling
+//!
+//! If a previously-indexed file fails to parse, its stale data is removed
+//! from the index to prevent returning outdated results.
+//!
+//! # Git Integration
+//!
+//! Extracts `repo_root`, `repo_name`, and `branch` from the workspace directory
+//! using git commands. Results are cached per-workspace during a scan.
+
 use crate::index::{
     load_indexed_sessions, remove_session_tx, replace_messages_tx, upsert_session_tx,
 };
@@ -118,6 +143,11 @@ pub fn index_root(conn: &mut Connection, root: &Path, full: bool) -> Result<Scan
         let parsed = match parse_by_extension(&ext, &contents) {
             Ok(parsed) => parsed,
             Err(_) => {
+                // Remove stale data if file was previously indexed but now fails to parse
+                if existing_map.contains_key(&path_str) {
+                    remove_session_tx(&tx, &path_str)?;
+                    stats.removed += 1;
+                }
                 stats.parse_errors += 1;
                 continue;
             }
@@ -186,20 +216,12 @@ fn modified_to_unix(path: &Path, metadata: &std::fs::Metadata) -> Result<i64, Sc
 
 fn workspace_path_from_meta(workspace: Option<&str>) -> Option<PathBuf> {
     let workspace = workspace?;
-    let expanded = expand_home(workspace)?;
+    let expanded = crate::util::expand_home(workspace);
     if expanded.is_dir() {
         Some(expanded)
     } else {
         None
     }
-}
-
-fn expand_home(path: &str) -> Option<PathBuf> {
-    if let Some(stripped) = path.strip_prefix("~/") {
-        let home = std::env::var_os("HOME")?;
-        return Some(PathBuf::from(home).join(stripped));
-    }
-    Some(PathBuf::from(path))
 }
 
 /// Infer agent name from the sessions root path.

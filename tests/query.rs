@@ -1,6 +1,6 @@
 use mmem::index::{init_schema, replace_messages_tx, upsert_session_tx};
 use mmem::model::{MessageRecord, SessionRecord};
-use mmem::query::{FindFilters, FindScope, find_messages};
+use mmem::query::{FindFilters, FindScope, QueryError, QueryMode, find_messages};
 use rusqlite::Connection;
 
 fn record(path: &str, agent: &str, workspace: &str, last_message_at: &str) -> SessionRecord {
@@ -82,4 +82,41 @@ fn finds_messages_with_filters() {
     let results = find_messages(&conn, "alpha", &filters).expect("query");
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].path, "/tmp/b.jsonl");
+}
+
+#[test]
+fn fts_syntax_error_produces_helpful_message() {
+    let conn = Connection::open_in_memory().expect("db");
+    init_schema(&conn).expect("schema");
+
+    // Deliberately invalid FTS5 query
+    let filters = FindFilters {
+        query_mode: QueryMode::Fts,
+        limit: 5,
+        ..Default::default()
+    };
+
+    let result = find_messages(&conn, "AND AND", &filters);
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        matches!(err, QueryError::InvalidFtsSyntax { .. }),
+        "Expected InvalidFtsSyntax, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn returns_empty_for_no_matches() {
+    let conn = Connection::open_in_memory().expect("db");
+    init_schema(&conn).expect("schema");
+
+    let filters = FindFilters {
+        limit: 10,
+        ..Default::default()
+    };
+
+    let results = find_messages(&conn, "nonexistent query term xyz", &filters).expect("query");
+    assert!(results.is_empty());
 }
